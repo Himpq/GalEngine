@@ -86,8 +86,8 @@ class A(ge.Assembly):
         self.btn4.borderRadius = 1000
         def changeFPS(*arg):
             ge.fpsControl.set(120 if ge.fpsControl.get() == 60 else 60)
-        self.v = ge.gui.GalVideo(r"C:\Users\Himpq\Videos\ASMR ReZero Rem.mp4", 640, 360, 500, 300)
-        # self.v = ge.gui.GalVideo(r"C:\Users\Himpq\Music\MV\ODESZA - Late Night.mp4", 640, 360, 500, 300)
+        self.v = ge.gui.GalVideo(r"test.mp4", 640, 360, 500, 300)
+        # self.v = ge.gui.GalVideo(r"test2.mp4", 640, 360, 500, 300)
         self.v.setVolume(100)
         self.timeShow = ge.gui.GalLabel(None, str(int(self.v.getTime()))+"s / "+ str(int(self.v.getDuration()))+"s", background=[255, 255, 255, 255])
         
