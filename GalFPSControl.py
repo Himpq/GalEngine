@@ -21,6 +21,7 @@ class fpsControlObject:
 
     def getRefreshAll(self):
         return self.refreshall
+    
     def setRefresh(self, strategy):
         self.refreshall = strategy
 

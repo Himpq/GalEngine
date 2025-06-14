@@ -5,18 +5,33 @@ import pygame
 import os
 import GalError
 import time
-import numpy
 from GalAPI import in_rect, notNone
 from pygame.color import THECOLORS
-from moviepy.editor import VideoFileClip
-
-np = numpy
 
 import GalEngine as galengine
+toAbsPath = galengine.toAbsPath
 
+class Switcher:
+    Surface = galengine.gsdl.SDLSurface
+    Font    = galengine.gsdl.SDLFont
+    SysFont = galengine.gsdl.SysFont
+    def Rect(x, y, w, h):
+        return [x, y, w, h]
+    smoothscale = galengine.gsdl.scale
+    scale       = galengine.gsdl.scale
+    flip        = galengine.gsdl.flip
+    rotate      = galengine.gsdl.rotate
+    
+    class draw:
+        rect = galengine.gsdl.draw.rect
 
-DefaultFont = pygame.font.Font(r"C:\WINDOWS\Fonts\STFANGSO.TTF", 40)
-z_index     = {}        #事件优先级，并非绘制优先级，绘制优先级请于组件Update中调整顺序
+    class image:
+        load = galengine.gsdl.image.load
+
+DefaultFont = Switcher.SysFont("Arial", 40)
+
+#事件优先级，并非绘制优先级，绘制优先级请于组件Update中调整顺序
+z_index     = {}        
 
 def isTopInGUI(x, clickPos):
     p = []
@@ -37,32 +52,55 @@ def isTopInGUI(x, clickPos):
 def sendRefreshRequest():
     galengine.RefreshRequest = True
 
+def getCenterPos(widget_width: int) -> int:
+    screen_width = galengine.screen.get_width()
+    return (screen_width - widget_width) // 2
+def getRightPos(widget_width: int) -> int:
+    screen_width = galengine.screen.get_width()
+    return screen_width - widget_width
+
+def galSceneTransition(screen, alpha):
+    """全屏黑色渐变，alpha: 0~255"""
+    width, height = screen.get_width(), screen.get_height()
+    s = Switcher.Surface((width, height))
+    s.set_alpha(alpha)
+    s.fill((0, 0, 0))
+    
+    screen.blit(s, (0, 0))
+
 class GalFont:
     def __init__(self, font, size, bold=False, italic=False):
+        font = toAbsPath(font)
         if os.path.isfile(font):
-            self.font = pygame.font.Font(font, size)
+            self.font = Switcher.Font(font, size)
             self.font.set_bold(bold)
             self.font.set_italic(italic)
         else:
-            self.font = pygame.font.SysFont(font, size, bold, italic)
+            self.font = Switcher.SysFont(font, size)
         self.render = self.font.render
 
 class GalGUIParent:
     def __init__(self, x=1):
         z_index[self] = 1 #点击优先级，同级按照覆盖顺序
-        
         self.padding        = GalPadding(0, 0, 0, 0)
         self.isHiding       = False
         self.isEnabledEvent = True
-
+        self.parent         = None
         galengine.GalLog.Print(self, "-> 创建[",self.__class__.__name__,"]")
+        self.x = 0
+        self.y = 0
+        self.width = 0
+        self.height = 0
 
     def setX(self, x):
         self.x = x
+
     def setY(self, y):
         self.y = y     
+
     def setPriority(self, x=1):
         z_index[self] = x
+
     def destroy(self):
         "Destroy Widget"
         if z_index.get(self):
@@ -72,15 +110,18 @@ class GalGUIParent:
             for v in range(len(galengine.__EventHandler[ev])-1):
                 if galengine.__EventHandler[ev][v][1] == self:
                     del galengine.__EventHandler[ev][v]
+
     def refresh(self):
         sendRefreshRequest()
+
     def getRect(self):
         i = self
         return (i.x,
-                                   i.y,
-                                   i.width + i.padding.left + i.padding.right,
-                                   i.height + i.padding.top + i.padding.bottom
-                                   )
+                i.y,
+                i.width + i.padding.left + i.padding.right,
+                i.height + i.padding.top + i.padding.bottom
+                )
+    
     def hide(self):
         if self.isHiding:
             self.isHiding = False
@@ -89,9 +130,23 @@ class GalGUIParent:
             self.isHiding = True
             self._enableEvent(False)
         self.refresh()
+
+    def setParent(self, parent):
+        self.parent = parent
+        parent.putChild(self, (self.x, self.y))
+        self.setPriority(z_index[parent] + 1) if z_index.get(parent) else self.setPriority(1)
+
     def _BlitOnScreen(self, widget, pos):
+        if self.parent:
+            pos = (self.x + self.parent.x, self.y + self.parent.y)
+            self.x, self.y = pos
+        
+            if self.parent.isHiding:
+                return
+            
         if not self.isHiding:
-            galengine.screen.blit(widget, pos)
+            galengine.blit(widget, pos)
+
     def _enableEvent(self, ena=True):
         self.isEnabledEvent = ena
             
@@ -105,17 +160,18 @@ class GalPadding:
     
 class GalImage(GalGUIParent):
     def __init__(self, path, x=0, y=0, width=None, height=None):
+        self.x = x
+        self.y = y
+        path = toAbsPath(path)
         if not os.path.isfile(path):
             raise GalError.PhotoNotFound("找不到图片 %s 。"%str(path))
         super().__init__()
-        self.img = pygame.image.load(path)
+        self.img = Switcher.image.load(path)
         self.originImg = self.img
-        self.pos = pygame.Rect(x, y, width, height) if width and height else (x, y)
+        self.pos = Switcher.Rect(x, y, width, height) if width and height else (x, y)
         self.width = width if width else self.img.get_width()
         self.height = height if height else self.img.get_height()
-        self.x = x
-        self.y = y
-
+        
     def getSurface(self):
         return self.img
         
@@ -125,20 +181,21 @@ class GalImage(GalGUIParent):
         else:
             self.x, self.y = x, y
 
-        self.pos = pygame.Rect(self.padding.left + x, self.padding.top + y,
+        self.pos = Switcher.Rect(self.padding.left + x, self.padding.top + y,
                                    self.padding.right + self.width, self.padding.bottom + self.height)
         self._BlitOnScreen(self.img, self.pos)
-    def scale(self, width, height, useOriginalImage=True, useSmoothScale=True):
+
+    def scale(self, width, height, useOriginalImage=True, useSmoothScale=False):
         if width == self.img.get_width() and height == self.img.get_height():
             return
-        f =  pygame.transform.smoothscale if useSmoothScale else pygame.transform.scale
+        f =  Switcher.smoothscale if useSmoothScale else Switcher.scale
         self.img = f(self.img if not useOriginalImage else self.originImg, (width, height))
 
     def flip(self, xb=False, yb=False):
-        self.img = pygame.transform.flip(self.img, xb, yb)
+        self.img = Switcher.flip(self.img, xb, yb)
 
     def rotate(self, angle):
-        self.img = pygame.transform.rotate(self.img, angle)
+        self.img = Switcher.rotate(self.img, angle)
 
 
 class GalLabel(GalGUIParent):
@@ -153,7 +210,7 @@ class GalLabel(GalGUIParent):
         self.y = y
         self.width = self.label.get_width()
         self.height = self.label.get_height()
-        
+        self.isTextCenter = False
         self.transparency = 255
 
     def getSurface(self):
@@ -172,6 +229,9 @@ class GalLabel(GalGUIParent):
         self.font = font
         self.label = self.font.render(self.text, 1, self.color, self.bgcolor)
         self.width, self.height = self.label.get_width(), self.label.get_height()
+    
+    def update(self):
+        self.label = self.font.render(self.text, 1, self.color, self.bgcolor)
 
 
 class GalButton(GalGUIParent):
@@ -195,22 +255,30 @@ class GalButton(GalGUIParent):
         self.color = [0, 0, 0, 255]
         self.enable = True
         self.surface = None
+        self._destroy = False
         
 
         galengine.GalLog.Print(self, ": 设置按钮文本名:["+self.text+"]")
 
         self.setTransparency(255)
+        self._bindingFunction(onclick, onhover, onhoveroff)
 
+    def destroy(self):
+        self._enableEvent(False)
+        self._destroy = True
+
+    def _bindingFunction(self, onclick, onhover, onhoveroff):
         if not onclick == None:
+            self.onclick = onclick
             @galengine.EventHandler(galengine.EVENTS['MouseDown'], self)
             def IfMouseInRect(event):
                 if not self.onclick or not self.enable or not self.isEnabledEvent:
                     return
                 if in_rect(event.pos, (self.x,
-                                       self.y,
-                                       self.width + self.padding.left + self.padding.right,
-                                       self.height + self.padding.top + self.padding.bottom
-                                       )) and isTopInGUI(self, event.pos):
+                                        self.y,
+                                        self.width + self.padding.left + self.padding.right,
+                                        self.height + self.padding.top + self.padding.bottom
+                                        )) and isTopInGUI(self, event.pos):
                     self.onclick(self)
                     galengine.GalLog.Print(self, ": 被点击，执行函数'"+self.onclick.__name__+"'")
         if not onhover == None:
@@ -255,11 +323,13 @@ class GalButton(GalGUIParent):
         
     def put(self, x=None, y=None):
         global AllRefresh
+        if self._destroy:
+            return
         
         if notNone(x, y):
             self.x, self.y = x, y
 
-
+        
         self.btn3 = self.font.render(self.text, 1, self.color)
 
         #绘制文本
@@ -268,7 +338,7 @@ class GalButton(GalGUIParent):
                 self.width = self.btn3.get_width() + 3
             if self.btn3.get_height() > self.height:
                 self.height = self.btn3.get_height()
-        self.surface = pygame.Surface((
+        self.surface = Switcher.Surface((
             self.width + self.padding.left + self.padding.right,
             self.height + self.padding.top + self.padding.bottom
         ))
@@ -276,7 +346,7 @@ class GalButton(GalGUIParent):
         #绘制边框
         self.surface.set_colorkey((255, 255, 255)) if self.borderRadius else None
         self.surface = self.surface.convert_alpha()
-        self.btn = pygame.draw.rect(self.surface,
+        self.btn = Switcher.draw.rect(self.surface,
                                     self.borderColor,
                                     [0,
                                      0,
@@ -285,7 +355,7 @@ class GalButton(GalGUIParent):
                                     ],
                                     0,
                                     border_radius=self.borderRadius)
-        self.btn2 = pygame.draw.rect(self.surface,
+        self.btn2 = Switcher.draw.rect(self.surface,
                                     self.backgroundColor,
                                     [0 + self.borderWidth,
                                      0 + self.borderWidth,
@@ -294,10 +364,11 @@ class GalButton(GalGUIParent):
                                      ],
                                      0,)
         #贴上文字
-        self.textsurface = pygame.Surface((
+        self.textsurface = Switcher.Surface((
             self.btn3.get_width(),
             self.btn3.get_height()
         ))
+        self.textsurface.fill((0,0,0,0)) 
         self.textsurface.set_colorkey((0, 0, 0))
         self.textsurface = self.textsurface.convert_alpha()
         self.textsurface.blit(self.btn3, (0, 0))
@@ -313,8 +384,9 @@ class GalButton(GalGUIParent):
 
 class GalVideo(GalGUIParent):
     def __init__(self, path: str, width:int = 800, height:int = 600, x:int = 0, y:int = 0):
-
-        self.videoPath = path
+        from moviepy.editor import VideoFileClip
+        import numpy
+        self.videoPath = toAbsPath(path)
         self.width = width
         self.height = height
         self.isHiding = False
@@ -333,7 +405,7 @@ class GalVideo(GalGUIParent):
         if not os.path.isfile(path):
             raise GalError.PhotoNotFound("无法找到文件 '"+path+"'。")
 
-        self.video = VideoFileClip(path)
+        self.video = VideoFileClip(self.videoPath)
         self.audio = self.video.audio
 
         self.audioChannel = pygame.mixer.find_channel()
@@ -429,8 +501,6 @@ class GalVideo(GalGUIParent):
             self.play()
             return
         
-        #Thread not sync!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! var: self.nowIndex
-        
         frame      = self.video.get_frame(self.frames[self.nowIndex])
         surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
         surface = pygame.transform.scale(surface, (self.width, self.height))
@@ -448,6 +518,9 @@ class GalVideo(GalGUIParent):
                 return
 
     def _playAudioPerFrame(self, frameID=None):
+        if not globals().get("numpy"):
+            import numpy
+
         if frameID == None:
             frameID = self.nowIndex
 
@@ -561,3 +634,113 @@ class GalSlider(GalGUIParent):
         mouseX = galengine.mouse.getPos()[0]
         val = int((mouseX - self.x) / self.widthPerStep)
         self.setValue(val)
+
+class GalGradientMask(GalGUIParent):
+    def __init__(self, startYRatio=0.6, color=(0, 0, 0), maxAlpha=180, x=0, y=0):
+        super().__init__()
+
+        self.x = x
+        self.y = y
+        self.width = 0
+        self.height = 0
+        
+        self.startYRatio = startYRatio
+        self.color = color
+        self.maxAlpha = maxAlpha
+
+    def put(self, screen):
+        self.width = screen.get_width()
+        self.height = screen.get_height()
+        gradYStart = int(self.height * self.startYRatio)
+        gradYEnd = self.height
+        gradHeight = gradYEnd - gradYStart
+        gradSurface = Switcher.Surface((self.width, gradHeight), galengine.pygame.SRCALPHA)
+        for i in range(gradHeight):
+            alpha = int(self.maxAlpha * (i / gradHeight))
+            Switcher.draw.rect(
+                gradSurface,
+                (*self.color, alpha),
+                Switcher.Rect(0, i, self.width, 1)
+            )
+        
+        screen.blit(gradSurface, (0, gradYStart))
+
+class GalDiv(GalGUIParent):
+    def __init__(self, width=100, height=80):
+        super().__init__()
+
+        self._children = []
+        self._surface  =  None
+        self.width  = width
+        self.height = height
+
+        self.bgColor        = (240, 240, 240)
+        self.titlebarColor  = (250, 250, 250)
+        self.borderColor    = (180, 180, 180)
+        self.titlebarHeight = 36
+        self.borderWidth    = 2
+
+    def putChild(self, widget, pos):
+        """将子组件放置在指定位置"""
+        if not isinstance(widget, GalGUIParent):
+            raise TypeError("仅允许 GalGUIParent 的子类")
+        widget.x = pos[0]
+        widget.y = pos[1]
+        self._children.append(widget)
+
+    def _putWindow(self):
+        """绘制窗口"""
+        self._surface = pygame.Surface((self.width, self.height))
+        self._surface.fill(self.bgColor)
+
+        # 标题栏
+        pygame.draw.rect(
+            self._surface,
+            self.titlebarColor,
+            pygame.Rect(0, 0, self.width, self.titlebarHeight)
+        )
+
+        # 边框
+        pygame.draw.rect(
+            self._surface,
+            self.borderColor,
+            pygame.Rect(0, 0, self.width, self.height),
+            self.borderWidth
+        )
+
+        # 标题栏区域参数
+        self.titlebarRect = {
+            "x": 0,
+            "y": 0,
+            "width":  self.width,
+            "height": self.titlebarHeight
+        }
+
+        # 标题
+        if not hasattr(self, "_title_label"):
+            self._title_label = GalLabel(
+                text="Window",
+                x=12,
+                y=(self.titlebarHeight - DefaultFont.get_height()) // 2,
+                color=[60, 60, 60, 255],
+                font=DefaultFont,
+            )
+            self._title_label.setParent(self)
+        else:
+            self._title_label.x = 12
+            self._title_label.y = (self.titlebarHeight - DefaultFont.get_height()) // 2
+        self._title_label.put(12, self._title_label.y)
+        self._surface.blit(self._title_label.getSurface(), (self._title_label.x, self._title_label.y))
+        self._BlitOnScreen(self._surface, (self.x, self.y))
+
+    def put(self, x=None, y=None):
+        """将所有子组件绘制到屏幕上"""
+        if self.isHiding:
+            return
+        
+        if not notNone(x, y):
+            x, y = self.x, self.y
+        else:
+            self.x, self.y = x, y
+
+        self._putWindow()

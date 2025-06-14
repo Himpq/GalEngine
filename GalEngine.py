@@ -4,18 +4,21 @@
 
 NO_LIMITED = 0xff
 
-from GalAPI import EmptyObject, Assembly
-import GalConfig as galcfg
+isAndroid = True
 
-import pygame
-import threading
-import time
 import sys
 import os
+sys.path.append("./GalEngine")
+
+from GalAPI import Assembly, EmptyObject
+import GalConfig as galcfg
+
 import threading
+import time
 import inspect
 import ctypes
 
+import pygame
 
 
 def _async_raise(tid, exctype):
@@ -51,11 +54,28 @@ class WINDOWTYPE:
     Resizable  = pygame.RESIZABLE    #可改变大小
     NoFrame    = pygame.NOFRAME      #隐藏边框控制条
 
+usingSDL2 = True
+
+if usingSDL2:
+    import GalSDL2 as gsdl
+
+
 __Assemblies = []
 __EventHandler = {}
 __Repaint = False
 RefreshRequest = False
 StillRefresh = True
+Showing = False
+
+usingAbsPath = False
+
+def useAbsolutePath():
+    """Buildozer to Android Application, you should enable this."""
+    global usingAbsPath
+    usingAbsPath = True
+
+def toAbsPath(path):
+    return os.path.abspath(path) if usingAbsPath else path
 
 import GalLog
 
@@ -65,7 +85,6 @@ GalLog.Print("Pygame init...")
 pygame.init()
 
 import GalError
-import GalNetwork as network
 import GalTransition as gtran
 import GalFPSControl as gfps
 import GalGUI as gui
@@ -73,37 +92,63 @@ import GalMedia as media
 import GalTimer as timer
 import GalMouse as mouse
 
-opengl = None
 
-screen = pygame.display.set_mode((640, 480), 0, 32)
 clock  = pygame.time.Clock()
-pygame.display.set_caption("GalEngine Window")
+
+if not usingSDL2:
+    screen = pygame.display.set_mode((640, 480), 0, 32)
+    pygame.display.set_caption("GalEngine Window")
+else:
+    screen = gsdl.screen()
+
+
 
 GalError.log = GalLog
 fpsControl = gfps.fpsControlObject()
 
+def blit(widget, at):
+    screen.blit(widget, at)
+
 def setWindowSize(width, height):
-    pygame.display.set_mode(size=(width, height), flags=screen.get_flags())
+    """Set window size"""
+    if not usingSDL2:
+        if not isAndroid:
+            pygame.display.set_mode(size=(width, height), flags=screen.get_flags())
+        else:
+            pygame.display.set_mode(size=(width, height))
+    else:
+        screen.set_mode(size=(width, height))
 
 
 def setWindowType(type_=0):
-    pygame.display.set_mode(size=(screen.get_size()), flags=type_)
-
-    if type_ & pygame.OPENGL != 0:
-        print("[GalEngine Warning] You are using OpenGL with your project! It will make your project unstable!")
-        import GalOpenGL as opengl
-        globals()['opengl'] = opengl
-        opengl.init()
-
+    """Set window render mode"""
+    if not usingSDL2:
+        pygame.display.set_mode(size=(screen.get_size()), flags=type_)
+        if type_ & pygame.OPENGL != 0:
+            print("[GalEngine Warning] You are using OpenGL with your project! It will make your project unstable!")
+            import GalOpenGL as opengl
+            globals()['opengl'] = opengl
+            opengl.init()
+    else:
+        screen.set_mode(flags=type_)
 
 def getWindowSize():
+    "Return window size"
     return pygame.display.get_window_size()
 
 
-def addAssembly(Class):
+# Assembli Manager
+
+def addAssembly(Class: Assembly):
     if not Class.__class__.__base__ == Assembly:
         raise GalError.AssemblyExtendsError("组件必须继承 GalAPI.Assembly 类。")
     __Assemblies.append(Class)
+
+def removeAssembly():
+    __Assemblies.pop().Destroy()
+
+def getAssemblies():
+    return __Assemblies
 
 
 def EventHandler(EventType, assembly):
@@ -120,6 +165,14 @@ def EventHandler(EventType, assembly):
     __EventHandler[EventType].append((h(f), assembly))
     return h
 
+def removeEventHandler(EventType, assembly):
+    if __EventHandler.get(EventType) == None:
+        return
+    for i in __EventHandler[EventType]:
+        if i[1] == assembly:
+            __EventHandler[EventType].remove(i)
+            print(__EventHandler)
+            break
 
 def update(rectangle):
     pygame.display.update(rectangle)
@@ -134,7 +187,15 @@ def show():
     n = 0
     t = time.time()
     pjtime = []
+    Showing = True
+    x = []
+    font = pygame.font.SysFont("Arial", 20)
+
+    screen.init()
+
+
     while not Done:
+        #帧数控制和页面刷新
         FPS = fpsControl.get()
         fpsControl.refresh()
         if not FPS == NO_LIMITED:
@@ -142,33 +203,41 @@ def show():
         if __Repaint == True:
             __Repaint = False
             continue
-        
         o1 = time.time()
-        
-        
         screen.fill((255,255,255))
         
         #更新组件(per frame)
         for i in __Assemblies:
-                i.Update()
+            i.Update()
 
         #更新计时器
         for i in timer.TIMERS:
             timer.TIMERS[i].check()
 
-        x = pygame.event.get(pump=True)
+        if not usingSDL2:
+            x = pygame.event.get(pump=True)
+            #将events传给各EventHandler
+            for event in x:
+                if event.type == pygame.QUIT:
+                    Done = True
+                if event.type == pygame.VIDEORESIZE:
+                    setWindowSize(*event.size)
 
-        #将events传给各EventHandler
-        for event in x:
-            if event.type == pygame.QUIT:
-                Done = True
-            if event.type == pygame.VIDEORESIZE:
-                setWindowSize(*event.size)
-
-            if event.type in __EventHandler.keys():
-                for i in __EventHandler[event.type]:
-                    i[0](event)
-
+                if event.type in __EventHandler.keys():
+                    for i in __EventHandler[event.type]:
+                        i[0](event)
+            pygame.event.pump()
+        else:
+            event = gsdl.sdl2.SDL_Event()
+            while gsdl.sdl2.SDL_PollEvent(event):
+                if event.type == gsdl.sdl2.SDL_QUIT:
+                    Done = True
+                elif event.type == gsdl.sdl2.SDL_WINDOWEVENT and event.window.event == gsdl.sdl2.SDL_WINDOWEVENT_RESIZED:
+                    setWindowSize(event.window.data1, event.window.data2)
+                pe = gsdl.SDLEvent(event)
+                if event.type in __EventHandler.keys():
+                    for handler in __EventHandler[event.type]:
+                        handler[0](pe)
         
         if RefreshRequest or not len(x) == 0 or StillRefresh:
 
@@ -177,8 +246,9 @@ def show():
             dellist = []
 
             #刷新动画
-            for i in gtran.transitionList:
-                    item = gtran.transitionList[i]
+            nowFrameTransitionList = gtran.transitionList.copy()
+            for i in nowFrameTransitionList:
+                    item = nowFrameTransitionList[i]
                     if item.finish:
                         dellist.append(i)
                     else:
@@ -191,21 +261,25 @@ def show():
                     lsgui = i.Draw()
                     refreshgui.append(lsgui)
             
-            #是否全局刷新
-            if opengl == None:
-                if fpsControl.getRefreshAll():
-                    pygame.display.update()
+            # 是否全局刷新
+            if not usingSDL2:
+                if not isAndroid:
+                    if fpsControl.getRefreshAll():
+                        pygame.display.update()
+                    else:
+                        for ls in refreshgui:
+                            for gui in ls:
+                                pygame.display.update(pygame.Rect(*gui.getRect()))
+                
                 else:
-                    for ls in refreshgui:
-                        for gui in ls:
-                            pygame.display.update(pygame.Rect(*gui.getRect()))
+                    if fpsControl.getRefreshAll():
+                        # 帧数显示
+                        fps_text = font.render(f"FPS: {fpsControl.getAverageFPS()}", True, (0, 0, 0), (255,255,255))
+                        screen.blit(fps_text, (5, 5))
+                        pygame.display.update()
             else:
-                if fpsControl.getRefreshAll():
-                    if not opengl == None:
-                        opengl.blitSurfaceOnScreen()
-                    pygame.display.flip()
+                screen.update()
 
-            pygame.event.pump()
             RefreshRequest = False
         
         
@@ -213,7 +287,7 @@ def show():
         o2 = time.time()
         #print(fpsControl.getAverageFPS())
         pjtime.append(o2-o1)
- 
+
     t2 = time.time()
 
     
@@ -229,5 +303,3 @@ def show():
     time.sleep(0.02)
 
     pygame.quit()
-    exit()
-    
