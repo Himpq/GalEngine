@@ -20,7 +20,7 @@ GalEngine 将部分 pygame 的接口替换为 SDL2 的接口，并做了 **Textu
 
 ## How to use
 ### Use in project(GalEngine)
-克隆本项目的源代码，使用`sys.path.append("./GalEngine")`引入路径，`import GalEngine as ge`导入总项目。具体参见还没写的GalEngine开发文档，可能也不会有。  
+克隆本项目的源代码，使用`sys.path.append("./GalEngine")`引入路径，`import GalEngine as ge`导入总项目。具体参见还没写的GalEngine开发文档，未来可能也没有，毕竟只是自己用而已。
 ### Use in project(GalEngine.GalSDL2)
 同上。直接导入`import GalSDL2`，即可调用SDL2进行绘制。窗体、显示模式等更改参见 **GalEngine.py**。
 
