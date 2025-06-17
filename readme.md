@@ -4,10 +4,10 @@
 本来是想做一个Galgame的渲染引擎，但是因为种种原因演变成现在这个**dirty code**样。
 
 ## Requirements
+Build for android:
 ```
 requirements = python3==3.10.12,kivy==2.3.0,pyjnius==1.5.0,hostpython3==3.10.12,pygame,pysdl2,numpy
 ```
-我想劝劝要用 python 开发手机游戏的人，还是赶紧转战 Unity 或者其他的游戏引擎吧，Python就不适合做这个，现在不止步有你好受的。
 
 # GalEngine.GalSDL2
 一种 [Buildozer](https://github.com/kivy/buildozer) 的 Pygame 渲染解决方案。  
@@ -16,30 +16,32 @@ requirements = python3==3.10.12,kivy==2.3.0,pyjnius==1.5.0,hostpython3==3.10.12,
 该模块并不依赖GalEngine，所以直接调用即可。
 
 ## What does it do
-GalEngine 将部分 pygame 的接口替换为 SDL2 的接口，并做了 **Texture/Renderer** 渲染的实现，使其能够做简单的GPU渲染，但是由于兼容性问题，目前会有问题。
+GalEngine 将部分 pygame 的接口替换为 SDL2 的接口，并做了 **Texture/Renderer** 渲染的实现，使其能够做简单的GPU渲染。
 
 ## How to use
 ### Use in project(GalEngine)
-克隆本项目的源代码，使用`sys.path.append("./GalEngine")`引入路径，`import GalEngine as ge`导入总项目。具体参见还没写的GalEngine开发文档，未来可能也没有，毕竟只是自己用而已。
+
+克隆本项目的源代码，使用`sys.path.append("./GalEngine")`引入路径，`import GalEngine as ge`导入总项目。  
+
 ### Use in project(GalEngine.GalSDL2)
-同上。直接导入`import GalSDL2`，即可调用SDL2进行绘制。窗体、显示模式等更改参见 **GalEngine.py**。
+同上。直接导入`import GalSDL2`，即可调用SDL2进行绘制。窗体、显示模式等更改参见 **GalEngine.py**。  
 
 # Switch
 GalGUI 里面存在：
 ```python
 class Switcher:
     Surface = galengine.gsdl.SDLSurface if galengine.usingSDL2 else pygame.Surface
-    Font    = galengine.gsdl.SDLFont if galengine.usingSDL2 else pygame.font.Font
-    SysFont = galengine.gsdl.SysFont if galengine.usingSDL2 else pygame.font.SysFont
+    Font    = galengine.gsdl.SDLFont if galengine.usingSDL2    else pygame.font.Font
+    SysFont = galengine.gsdl.SysFont if galengine.usingSDL2    else pygame.font.SysFont
     def Rect(x, y, w, h):
         return [x, y, w, h]
-    smoothscale = galengine.gsdl.scale if galengine.usingSDL2 else pygame.transform.scale
-    scale       = galengine.gsdl.scale if galengine.usingSDL2 else pygame.transform.scale
-    flip        = galengine.gsdl.flip if galengine.usingSDL2 else pygame.transform.flip
+    smoothscale = galengine.gsdl.scale if galengine.usingSDL2  else pygame.transform.scale
+    scale       = galengine.gsdl.scale if galengine.usingSDL2  else pygame.transform.scale
+    flip        = galengine.gsdl.flip if galengine.usingSDL2   else pygame.transform.flip
     rotate      = galengine.gsdl.rotate if galengine.usingSDL2 else pygame.transform.rotate
     
     class draw:
-        rect = galengine.gsdl.draw.rect if galengine.usingSDL2 else pygame.draw.rect
+        rect = galengine.gsdl.draw.rect if galengine.usingSDL2  else pygame.draw.rect
 
     class image:
         load = galengine.gsdl.image.load if galengine.usingSDL2 else pygame.image.load
@@ -54,7 +56,7 @@ class Switcher:
 NO_LIMITED = 0xff
 
 isAndroid = True
-usingSDL2 = True   # <-- change there
+usingSDL2 = True   # <-- change here
 
 import sys
 import os
@@ -64,8 +66,23 @@ sys.path.append("./GalEngine")
 # Build android apk
 参见 [Buildozer & WSL 2 打包Python文件为APK](https://himpqblog.cn/index.php/archives/811) ，里面有我一路踩过的坑，以及后悔没早点转用 Unity。  
 
-在打包的时候记得把 GalEngine 作为资源文件一样打包进去即可。
+在打包的时候记得把 GalEngine 作为资源文件一样打包进去即可。  
+你可以使用`adb logcat | grep python`在设备上调试，这样会在终端显示报错信息。
 
+# Notice
+
+## Loading
+在 Python for android 上，程序入场时会呈现加载界面(loading screen)，会导致与SDL2渲染时间重合一部分，如果你有加载动画需要渲染，需要执行：
+```python
+from android import loadingscreen
+loadingscreen.hide_loading_screen()
+```
+移除加载界面。**loadingscreen**是python for android提供的接口。
+
+## Absolute path
+在 Python for Android 中，程序的资源文件导入必须使用绝对路径，否则会出现找不到资源文件的错误。  
+
+在 GalEngine.GalGUI 中，如果 `isAndroid` 被设置为**True**，那么 GalEngine 会自动将所有传入模块的路径转换为绝对路径。
 
 # Change
 Ver0.1: 
