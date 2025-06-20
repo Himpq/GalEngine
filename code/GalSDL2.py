@@ -1,4 +1,6 @@
 
+from typing import *
+
 import os
 import sdl2
 import sdl2.ext
@@ -6,6 +8,8 @@ import pygame
 import math
 import ctypes
 Renderer = None
+
+ImageCachePool = {}
 
 class screen:
     def __init__(self, width=800, height=600, title="GalEngine SDL2"):
@@ -15,18 +19,20 @@ class screen:
         self.title = title
         self.width = width
         self.height = height
+        self.tempFlags = None
 
     def init(self):
         global Renderer
         self.window = sdl2.ext.Window(self.title,
                                       size=(self.width, self.height),
-                                      flags=sdl2.SDL_WINDOW_FULLSCREEN
+                                      flags=self.tempFlags
                                       )
         self.renderer = sdl2.SDL_CreateRenderer(self.window.window, -1, sdl2.SDL_RENDERER_ACCELERATED)
         self.window.show()
+
         Renderer = self.renderer
 
-    def blitPygame(self, what: pygame.Surface, at):
+    def blitPygame(self, what: pygame.Surface, at: Tuple[int, int]):
         raw           = pygame.image.tostring(what, "RGBA", 1)
         width, height = what.get_size()
         sdlSurface    = sdl2.SDL_CreateRGBSurfaceFrom(raw, width, height, 32, width*4, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000)
@@ -47,8 +53,10 @@ class screen:
         if hasattr(surface, "texture"):
             texture = surface.texture
             w, h = surface.width, surface.height
+
         elif isinstance(surface, tuple) and len(surface) == 3:
             texture, w, h = surface
+
         elif isinstance(surface, pygame.Surface):
             surf_str = pygame.image.tostring(surface, "RGBA")
             w, h = surface.get_width(), surface.get_height()
@@ -61,53 +69,57 @@ class screen:
         else:
             raise TypeError("blit 只支持 SDLSurface 或 (texture, w, h)")
 
+        sdl2.SDL_SetTextureBlendMode(texture, sdl2.SDL_BLENDMODE_BLEND)
         dstrect = sdl2.SDL_Rect(int(at[0]), int(at[1]), w, h)
         sdl2.SDL_RenderCopy(self.renderer, texture, None, dstrect)
 
     def update(self):
-        sdl2.SDL_RenderPresent(self.renderer)  # 注释掉
+        sdl2.SDL_RenderPresent(self.renderer)
+        # Using surface refresh:
         # sdl2.SDL_UpdateWindowSurface(self.window.window)
     
     def get_width(self):
         return self.width
+    
     def get_height(self):
         return self.height
+    
     def get_size(self):
         return (self.width, self.height)
-    
-    # def fill(self, rgb):
-    #     color = sdl2.SDL_MapRGB(sdl2.SDL_AllocFormat(sdl2.SDL_PIXELFORMAT_RGBA8888), rgb[0], rgb[1], rgb[2])
-    #     rect  = sdl2.SDL_Rect(0, 0, self.get_width(), self.get_height())
-    #     sdl2.SDL_SetRenderDrawColor(self.renderer, rgb[0], rgb[1], rgb[2], 255)
-    #     sdl2.SDL_RenderFillRect(self.renderer, rect)
 
     def fill(self, color=(0,0,0,255)):
+        """Fill the screen with a color"""
         if len(color) == 3:
             color = (color[0], color[1], color[2], 255)
         sdl2.SDL_SetRenderDrawColor(self.renderer, *color)
         sdl2.SDL_RenderClear(self.renderer)
 
     def quit(self):
+        """Window destroy"""
         sdl2.SDL_DestroyRenderer(self.renderer)
         self.window.hide()
         sdl2.ext.quit()
 
     def set_mode(self, size=None, flags=None):
+        """Set window size and video mode"""
         if size:
-            # self.window.size = size
-            # sdl2.SDL_SetWindowSize(self.window.window, size[0], size[1])
             self.width, self.height = size
 
         if flags:
             # Example: handle fullscreen flag from pygame
+            if not hasattr(self, "window"):
+                self.tempFlags = flags
+                return
+            
             if hasattr(pygame, "FULLSCREEN") and (flags & pygame.FULLSCREEN):
                 sdl2.SDL_SetWindowFullscreen(self.window.window, sdl2.SDL_WINDOW_FULLSCREEN)
             else:
-                sdl2.SDL_SetWindowFullscreen(self.window.window, 0)
+                sdl2.SDL_SetWindowFullscreen(self.window.window, None)
 
 class SDLSurface:
-    def __init__(self, size, alpha=True, texture=None, orig_surface=None, colorkey=None):
-        self.width, self.height = size
+    def __init__(self, size: Tuple[int, int], alpha=True, texture: Optional[sdl2.SDL_Texture] = None, orig_surface=None, colorkey=None):
+        """Create a fake SDLSurface with given size and optional texture. (Actually it is a wrapper around SDL_Texture)"""
+        self.width, self.height = [int(i) for i in size]
         self.renderer           = Renderer
         
         if texture is not None:
@@ -119,16 +131,16 @@ class SDLSurface:
                 sdl2.SDL_TEXTUREACCESS_TARGET,
                 self.width, self.height
             )
-        if alpha == pygame.SRCALPHA:
+        if alpha == pygame.SRCALPHA or alpha:
             sdl2.SDL_SetTextureBlendMode(self.texture, sdl2.SDL_BLENDMODE_BLEND)
         self._orig_surface = orig_surface  # 缓存原始surface指针
         self._colorkey = colorkey         # 当前colorkey缓存
-
+        # print("Create surface.", size) if size[0] > 600 else None
 
     def from_texture(renderer, texture, width, height):
-        return SDLSurface(width, height, texture=texture)
+        return SDLSurface((width, height), texture=texture)
 
-    def from_surface(renderer, surf, colorkey=None):
+    def from_surface(renderer, surf, colorkey=None, cache=True):
         # 缓存原始surface副本（避免SDL_FreeSurface后失效）
         surf_copy = sdl2.SDL_ConvertSurface(surf, surf.contents.format, 0)
         if colorkey is not None:
@@ -137,7 +149,9 @@ class SDLSurface:
         texture = sdl2.SDL_CreateTextureFromSurface(renderer, surf_copy)
         sdl2.SDL_SetTextureBlendMode(texture, sdl2.SDL_BLENDMODE_BLEND)  # 关键！
         w, h = surf_copy.contents.w, surf_copy.contents.h
-        return SDLSurface((w, h), texture=texture, orig_surface=surf_copy, colorkey=colorkey)
+        if not cache:
+            sdl2.SDL_FreeSurface(surf_copy)
+        return SDLSurface((w, h), alpha=True, texture=texture, orig_surface=surf_copy, colorkey=colorkey)
 
         
     def set_colorkey(self, colorkey):
@@ -238,10 +252,13 @@ class SDLSurface:
         rect: (x, y, w, h)
         width: 0 填充，>0 画边框
         """
+        if len(color) == 3:
+            color = (color[0], color[1], color[2], 255)
         # 保存当前渲染目标
         prev_target = sdl2.SDL_GetRenderTarget(self.renderer)
         # 切换渲染目标到本 texture
         sdl2.SDL_SetRenderTarget(self.renderer, self.texture)
+
         r, g, b, a = [int(i) for i in color]
         sdl2.SDL_SetRenderDrawColor(self.renderer, r, g, b, a)
         sdl_rect = sdl2.SDL_Rect(*rect)
@@ -260,19 +277,91 @@ class SDLSurface:
     def copy(self):
         return self
 
+class SDLEvent:
+    """
+    兼容pygame事件API的SDL事件包装器
+    """
+    def __init__(self, sdl_event):
+        self._event = sdl_event
+        self.type = sdl_event.type
+
+        # 键盘事件
+        if self.type in (sdl2.SDL_KEYDOWN, sdl2.SDL_KEYUP):
+            self.key = sdl_event.key.keysym.sym
+            self.mod = sdl_event.key.keysym.mod
+            self.unicode = getattr(sdl_event.key, "unicode", None)
+        # 鼠标移动
+        elif self.type == sdl2.SDL_MOUSEMOTION:
+            self.pos = (sdl_event.motion.x, sdl_event.motion.y)
+            self.rel = (sdl_event.motion.xrel, sdl_event.motion.yrel)
+            self.buttons = (
+                (sdl_event.motion.state & sdl2.SDL_BUTTON_LMASK) != 0,
+                (sdl_event.motion.state & sdl2.SDL_BUTTON_MMASK) != 0,
+                (sdl_event.motion.state & sdl2.SDL_BUTTON_RMASK) != 0,
+            )
+        # 鼠标按键
+        elif self.type in (sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP):
+            self.pos = (sdl_event.button.x, sdl_event.button.y)
+            self.button = sdl_event.button.button
+        # 窗口事件
+        elif self.type == sdl2.SDL_WINDOWEVENT:
+            self.event = sdl_event.window.event
+            self.size = (sdl_event.window.data1, sdl_event.window.data2)
+        # 文本输入
+        elif self.type == sdl2.SDL_TEXTINPUT:
+            self.text = sdl_event.text.text.decode("utf-8")
+        # 鼠标滚轮
+        elif self.type == sdl2.SDL_MOUSEWHEEL:
+            self.x = sdl_event.wheel.x
+            self.y = sdl_event.wheel.y
+
+    def __getattr__(self, name):
+        # 兼容pygame的event.dict
+        if name == "dict":
+            return self.__dict__
+        raise AttributeError(f"'SDLEvent' object has no attribute '{name}'")
+
+
 class SDLFont:
     def __init__(self, font_path, size):
+        font_path = os.path.abspath(font_path)
+        
         if not sdl2.sdlttf.TTF_WasInit():
             sdl2.sdlttf.TTF_Init()
+
         self.font = sdl2.sdlttf.TTF_OpenFont(font_path.encode('utf-8'), size)
+
         if not self.font:
             raise RuntimeError(f"Failed to load font: {font_path}")
+        
+    def render_wrapped(self, text, max_width, antialias, color=(255,255,255,255), bgcolor=None, line_spacing=5):
+        """渲染带有换行的文本，返回一个包含所有文本的表面"""
+        texts = text.split("\n")
+        surfaces = []
 
-    def render(self, text, antiatias, color=(255,255,255,255), bgcolor=None):
+        for line in texts:
+            surfaces.append(self.render(line, antialias, color, bgcolor))
+
+        widths = [surf.get_width() for surf in surfaces]
+        maxWidth = max(max_width, max(widths))
+        totalHeight = sum(surf.get_height() for surf in surfaces) + (len(surfaces) - 1) * line_spacing
+
+        mainSurface = SDLSurface((maxWidth, totalHeight), alpha=True)
+        mainSurface.fill((0, 0, 0, 0))  # 填充透明背景
+
+        y = 0
+        for surface in surfaces:
+            mainSurface.blit(surface, (0, y))
+            y += surface.get_height() + line_spacing
+
+        return mainSurface
+
+
+    def render(self, text, antialias=True, color=(255,255,255,255), bgcolor=None):
         """
             渲染文本为surface，color为(r,g,b,a)
             返回SDL_Surface指针
-            支持antiatias和bgcolor
+            支持antialias和bgcolor
         """
         if not text:
             # 返回一个1x1的透明SDLSurface
@@ -305,6 +394,11 @@ class SDLFont:
             sdl2.sdlttf.TTF_CloseFont(self.font)
             self.font = None
 
+    def get_height(self):
+        if self.font:
+            return sdl2.sdlttf.TTF_FontHeight(self.font)
+        return 0
+
     def set_italic(self, italic: bool):
         # SDL_ttf does not support setting italic dynamically.
         # You need to load an italic font file to use italic style.
@@ -332,6 +426,8 @@ def scale(surface: SDLSurface, size):
     返回缩放后的新 SDLSurface
     """
     new_w, new_h = size
+    if surface.get_width() == new_w and surface.get_height() == new_h:
+        return surface
     # 创建目标 texture
     new_texture = sdl2.SDL_CreateTexture(
         surface.renderer,
@@ -405,6 +501,10 @@ class draw:
         rect: (x, y, w, h)
         width: 0 填充，>0 画边框
         """
+        rect = [int(i) for i in rect]
+        if len(color) == 3:
+            color = (color[0], color[1], color[2], 255)
+
         # 如果是SDLSurface实例，则在其texture上绘制
         if hasattr(target, "texture") and hasattr(target, "renderer"):
             target.draw_rect(color, rect, width)
@@ -422,62 +522,60 @@ class draw:
                     )
                     if border_rect.w > 0 and border_rect.h > 0:
                         sdl2.SDL_RenderDrawRect(target, border_rect)
-
+    
+    def line(target, color, start, end, width=1):
+        """
+        兼容pygame接口的线段绘制。
+        target: SDLSurface 或 renderer
+        color: (r,g,b,a)
+        start: (x1, y1)
+        end: (x2, y2)
+        width: 线段宽度
+        """
+        start = [int(i) for i in start]
+        end = [int(i) for i in end]
+        if len(color) == 3:
+            color = (color[0], color[1], color[2], 255)
+        # 如果是SDLSurface实例，则在其texture上绘制
+        if hasattr(target, "texture") and hasattr(target, "renderer"):
+            sdl2.SDL_SetRenderTarget(target.renderer, target.texture)
+            r, g, b, a = color
+            sdl2.SDL_SetRenderDrawColor(target.renderer, r, g, b, a)
+            sdl2.SDL_RenderDrawLine(target.renderer, int(start[0]), int(start[1]), int(end[0]), int(end[1]))
+            sdl2.SDL_SetRenderTarget(target.renderer, None)
+        else:
+            # 认为是renderer
+            r, g, b, a = color
+            sdl2.SDL_SetRenderDrawColor(target, r, g, b, a)
+            sdl2.SDL_RenderDrawLine(target, int(start[0]), int(start[1]), int(end[0]), int(end[1]))
+        
     
 class image:
-    def load(path):
+    def load(path, cache=False):
         """
         renderer: SDL_Renderer*
         path: 图片路径
         返回: (texture, width, height)
         """
+        if ImageCachePool.get(path):
+            return ImageCachePool.get(path)
+        
+        print("[SDL2] Load image:", path)
         surf = sdl2.sdlimage.IMG_Load(path.encode('utf-8'))
         if not surf:
             raise RuntimeError(f"Failed to load image: {path}")
-        sdl_surface = SDLSurface.from_surface(Renderer, surf)
+        
+        # 确保PNG的透明通道被保留
+        if path.lower().endswith('.png'):
+            texture = sdl2.SDL_CreateTextureFromSurface(Renderer, surf)
+            # 设置混合模式
+            sdl2.SDL_SetTextureBlendMode(texture, sdl2.SDL_BLENDMODE_BLEND)
+            w, h = surf.contents.w, surf.contents.h
+            sdl_surface = SDLSurface((w, h), texture=texture)
+        else:
+            sdl_surface = SDLSurface.from_surface(Renderer, surf, None, False)
+        
         sdl2.SDL_FreeSurface(surf)
+        ImageCachePool[path] = sdl_surface
         return sdl_surface
     
-class SDLEvent:
-    """
-    兼容pygame事件API的SDL事件包装器
-    """
-    def __init__(self, sdl_event):
-        self._event = sdl_event
-        self.type = sdl_event.type
-
-        # 键盘事件
-        if self.type in (sdl2.SDL_KEYDOWN, sdl2.SDL_KEYUP):
-            self.key = sdl_event.key.keysym.sym
-            self.mod = sdl_event.key.keysym.mod
-            self.unicode = getattr(sdl_event.key, "unicode", None)
-        # 鼠标移动
-        elif self.type == sdl2.SDL_MOUSEMOTION:
-            self.pos = (sdl_event.motion.x, sdl_event.motion.y)
-            self.rel = (sdl_event.motion.xrel, sdl_event.motion.yrel)
-            self.buttons = (
-                (sdl_event.motion.state & sdl2.SDL_BUTTON_LMASK) != 0,
-                (sdl_event.motion.state & sdl2.SDL_BUTTON_MMASK) != 0,
-                (sdl_event.motion.state & sdl2.SDL_BUTTON_RMASK) != 0,
-            )
-        # 鼠标按键
-        elif self.type in (sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP):
-            self.pos = (sdl_event.button.x, sdl_event.button.y)
-            self.button = sdl_event.button.button
-        # 窗口事件
-        elif self.type == sdl2.SDL_WINDOWEVENT:
-            self.event = sdl_event.window.event
-            self.size = (sdl_event.window.data1, sdl_event.window.data2)
-        # 文本输入
-        elif self.type == sdl2.SDL_TEXTINPUT:
-            self.text = sdl_event.text.text.decode("utf-8")
-        # 鼠标滚轮
-        elif self.type == sdl2.SDL_MOUSEWHEEL:
-            self.x = sdl_event.wheel.x
-            self.y = sdl_event.wheel.y
-
-    def __getattr__(self, name):
-        # 兼容pygame的event.dict
-        if name == "dict":
-            return self.__dict__
-        raise AttributeError(f"'SDLEvent' object has no attribute '{name}'")
