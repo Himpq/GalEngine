@@ -1,4 +1,4 @@
-# 一个简陋的文档
+# 一个简陋的使用教程
 
 开始开发 GalEngine 并且具备可移植性（Windows & Android），需要下载源代码```git clone https://github.com/Himpq/GalEngine.git```。  
 
